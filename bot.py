@@ -11,71 +11,78 @@ from telegram.error import TelegramError
 import deepl
 
 # logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-# URL's
-
 # keys, can be environment variables
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8121913581:AAEcplN7VQ9r2uvAelVbCegaxCQPusdFBgk")
-CHAT_ID        = os.getenv("CHAT_ID", "-1002514102114")
-NASA_API_KEY   = os.getenv("NASA_API_KEY", "5RqBZjQI4rrfEXoNIwpbEKdYF57IVQkyzBGX1d2h")
+TELEGRAM_TOKEN = os.getenv(
+    "TELEGRAM_TOKEN", "8121913581:AAEcplN7VQ9r2uvAelVbCegaxCQPusdFBgk"
+)
+CHAT_ID = os.getenv("CHAT_ID", "-1002514102114")
+NASA_API_KEY = os.getenv("NASA_API_KEY", "5RqBZjQI4rrfEXoNIwpbEKdYF57IVQkyzBGX1d2h")
 DEEPL_AUTH_KEY = os.getenv("DEEPL_AUTH_KEY", "c5a6de6d-01ab-46d1-8e8f-0e2946813d0f:fx")
-CACHE_DB_PATH  = os.getenv("CACHE_DB_PATH", "cache.db")
-DONKI_URL      = os.getenv("DONKI_URL", "https://api.nasa.gov/DONKI/notifications")
+CACHE_DB_PATH = os.getenv("CACHE_DB_PATH", "cache.db")
+DONKI_URL = os.getenv("DONKI_URL", "https://api.nasa.gov/DONKI/notifications")
 
-# check the keys
-missing = [name for name, val in [
-    ('TELEGRAM_TOKEN', TELEGRAM_TOKEN),
-    ('CHAT_ID', CHAT_ID),
-    ('NASA_API_KEY', NASA_API_KEY),
-    ('DEEPL_AUTH_KEY', DEEPL_AUTH_KEY)
-] if not val]
+# Проверка ключей
+missing = [
+    n
+    for n, v in [("NASA_API_KEY", NASA_API_KEY), ("DEEPL_AUTH_KEY", DEEPL_AUTH_KEY)]
+    if not v
+]
 if missing:
-    logger.error(f"Не установлены обязательные настройки: {', '.join(missing)}")
-    raise RuntimeError(f"Missing configuration: {', '.join(missing)}")
+    logger.error(f"Missing configuration: {', '.join(missing)}")
+    raise RuntimeError(f"Не заданы: {', '.join(missing)}")
 
-# cache DB class
+
+# Кэширование DB
+def _connect_db(path):
+    conn = sqlite3.connect(path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sent_events (
+            event_id TEXT PRIMARY KEY,
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS translations (
+            source TEXT PRIMARY KEY,
+            translated TEXT
+        )"""
+    )
+    conn.commit()
+    return conn
+
+
 class CacheDB:
-    def __init__(self, path: str) -> None:
-        self.conn = sqlite3.connect(path)
-        self._init_tables()
+    def __init__(self, path):
+        self.conn = _connect_db(path)
 
-    def _init_tables(self):
-        cur = self.conn.cursor()
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS sent_events (
-                event_id TEXT PRIMARY KEY,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )''')
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS translations (
-                source TEXT PRIMARY KEY,
-                translated TEXT
-            )''')
-        self.conn.commit()
 
-# event cache class
 class EventCache:
-    """Кэш уже отправленных событий"""
     def __init__(self, db: CacheDB):
         self.db = db
 
     def is_new(self, event_id: str) -> bool:
         cur = self.db.conn.cursor()
-        # исправлено имя таблицы и передача параметра как кортеж
-        cur.execute('SELECT 1 FROM sent_events WHERE event_id = ?', (event_id,))
+        cur.execute("SELECT 1 FROM sent_events WHERE event_id=?", (event_id,))
         return cur.fetchone() is None
 
     def mark_sent(self, event_id: str):
         cur = self.db.conn.cursor()
-        # исправлен синтаксис INSERT INTO и передача параметра как кортеж
-        cur.execute('INSERT OR IGNORE INTO sent_events(event_id) VALUES(?)', (event_id,))
+        cur.execute(
+            "INSERT OR IGNORE INTO sent_events(event_id) VALUES(?)", (event_id,)
+        )
         self.db.conn.commit()
 
-# NASA DONKI API class
+
 class DonkiClient:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key):
         self.api_key = api_key
 
     def fetch(self, start: str, end: str) -> list:
@@ -85,135 +92,116 @@ class DonkiClient:
             "type": "all",
             "api_key": self.api_key,
         }
-        logger.info(f"Fetching DONKI events from {start} to {end}")
-        resp = requests.get(DONKI_URL, params=params)
-        resp.raise_for_status()
-        json_file = "output.json"
-        result = resp.json()
+        logger.info(f"Fetching DONKI from {start} to {end}")
+        r = requests.get(DONKI_URL, params=params)
+        r.raise_for_status()
+        data = r.json()
+        with open("output.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        return data
 
-        with open(json_file, "w") as file:
-            json.dump(result, file, indent=4)
 
-        return result
-    
-# text formatter class
 class Formatter:
-    # formate text and get links
     @staticmethod
-    def format(ev: dict) -> tuple[str, list[str]]:
-        msg_type = ev.get("messageType", ev.get("type", "UNKNOWN"))
-        issue_time = ev.get("messageIssueTime", ev.get("beginTime", "N/A"))
-        body = ev.get("messageBody", "")
-        link = ev.get("messageURL", "")
-        event_class = "empty event class"
+    def format(ev: dict) -> tuple[list[str], list[str]]:
+        remove_lines = ("Links to")
 
-        # set event name
-        match msg_type:
-            case "FLR":
-                event_class = "Солнечная вспышка"
-            case "SEP":
-                event_class = "Подъёмы энергичный частиц"
-            case "CME":
-                event_class = "Корональные выбросы массы"
-            case "IPS":
-                event_class = "Межпланетные ударные волны"
-            case "MPC":
-                event_class = "Прорывы магнитопаузы"
-            case "GST":
-                event_class = "Геомагнитные бури"
-            case "RBE":
-                event_class = "Усиления радиационных поясов"
-
-        lines = ["База Данных Уведомлений, Знаний и информации Координируемого Сообществом Центра Моделирования (CCMC DONKI)", f"[{msg_type}] {issue_time}", f"Класс события: {event_class}"]
-        for line in body.splitlines():
-            if line.strip().startswith("Links to"):
+        msg_type = ev.get("messageType", ev.get("type", ""))
+        issue_time = ev.get("messageIssueTime", ev.get("beginTime", ""))
+        body = ev.get("messageBody", "") or ""
+        link = ev.get("link", "")
+        # header
+        lines = [f"[{msg_type}] {issue_time}"]
+        # body lines until Links to:
+        for raw in body.splitlines():
+            txt = raw.strip()
+            if txt.startswith(remove_lines):
                 continue
-            lines.append(line)
-        summary = "\n".join(lines).strip()
-
-        # getting url and links from body
-        urls = re.findall(r'https?://\S+', body)
-        seen = set()
-        links = [link]
+            clean = re.sub(r"^##\s*", "", raw).rstrip()
+            if clean:
+                lines.append(clean)
+        # extract links
+        urls = re.findall(r"https?://\S+", body)
+        if link:
+            urls.insert(0, link)
+        seen, links = set(), []
         for url in urls:
             if url not in seen:
                 seen.add(url)
                 links.append(url)
+        return lines, links
 
-        return summary, links
 
-# DeepL API class
 class Translator:
-    def __init__(self, api_key: str, db: CacheDB) -> None:
-        self.translator = deepl.Translator(api_key)
+    def __init__(self, auth_key: str, db: CacheDB):
+        self.client = deepl.Translator(auth_key)
         self.db = db
 
-    def translate(self, text: str) -> str:
+    def translate_line(self, text: str) -> str:
         cur = self.db.conn.cursor()
-        cur.execute('SELECT translated FROM translations WHERE source = ?', (text,))
-        row = cur.fetchone()
-        if row:
+        cur.execute("SELECT translated FROM translations WHERE source=?", (text,))
+        if row := cur.fetchone():
             return row[0]
-        result = self.translator.translate_text(text, target_lang="RU").text
-        logger.info("Translate result is ready")
-        cur.execute('INSERT INTO translations(source, translated) VALUES(?,?)', (text, result))
+        res = self.client.translate_text(text, target_lang="RU").text
+        cur.execute(
+            "INSERT INTO translations(source, translated) VALUES(?,?)", (text, res)
+        )
         self.db.conn.commit()
-        return result
-    
+        return res
+
+    def translate_lines(self, lines: list[str]) -> list[str]:
+        return [self.translate_line(l) for l in lines]
+
+
 class TelegramNotifier:
-    def __init__(self, token: str, chat_id: str) -> None:
+    def __init__(self, token, chat_id):
         self.bot = Bot(token=token)
         self.chat_id = chat_id
 
-        async def send(self, text: str, links: list[str]):
-            try:
-                # Добавляем ссылки в конец сообщения перед отправкой
-                if links:
-                    text = text + "\n\nСсылки:\n" + "\n".join(links)
-                await self.bot.send_message(chat_id=self.chat_id, text=text)
-            except TelegramError as te:
-                logger.error(f"Error sending a message: {te}")
-            except Exception as e:
-                logger.error(f"Unknown error on on TelegramNotifier.send(): {e}")
+    async def send(self, text: str, links: list[str]):
+        # await self.bot.send_message(chat_id=self.chat_id, text=text)
+        # if links:
+        #     await self.bot.send_message(chat_id=self.chat_id, text='\n'.join(links))
+        pass
+
 
 def get_date_range() -> tuple[str, str]:
-    now = datetime.now(timezone.utc)
-    end = now.date()
-    start = end - timedelta(days=1)
-    return start.isoformat(), end.isoformat()
+    today = datetime.now(timezone.utc).date()
+    return (today - timedelta(days=1)).isoformat(), today.isoformat()
+
 
 async def main():
     db = CacheDB(CACHE_DB_PATH)
     cache = EventCache(db)
     client = DonkiClient(NASA_API_KEY)
-    formatter = Formatter()
-    translator = Translator(DEEPL_AUTH_KEY, db)
+    fmt = Formatter()
+    tr = Translator(DEEPL_AUTH_KEY, db)
     notifier = TelegramNotifier(TELEGRAM_TOKEN, CHAT_ID)
 
     start, end = get_date_range()
     events = client.fetch(start, end)
-    msg_log = "output.txt"
-
-    # изменить на а при включении кэша
-    with open(msg_log, "w", encoding="utf-8") as file:
-        for event in events:
-            if event.get("messageType") == "Report":
+    with open("output.txt", "w", encoding="utf-8") as f:
+        for ev in events:
+            if ev.get("messageType") == "Report":
                 break
-            event_id = event.get("messageID") or event.get("activityID") or f"{event.get("messageType")}:{event.get("messageIssueTime")}"
-            # if not cache.is_new(event_id):
-                # continue
-
-            summary_en, links = formatter.format(event)
-            # summary_ru = translator.translate(summary_en)
+            eid = (
+                ev.get("messageID")
+                or ev.get("activityID")
+                or f"{ev.get('messageType')}:{ev.get('messageIssueTime')}"
+            )
+            # if not cache.is_new(eid): continue
+            lines, links = fmt.format(ev)
+            # translated = tr.translate_lines(lines)
+            # summary_ru = '\n'.join(translated)
+            summary_ru = "\n".join(lines)
             # await notifier.send(summary_ru, links)
-            # cache.mark_sent(event_id)
-            # logger.info(f"Sent notification for {event_id}")
+            f.write(summary_ru + "\n")
+            if links:
+                f.write("Ссылки:\n" + "\n".join(links) + "\n")
+            f.write("-" * 100 + "\n")
+            cache.mark_sent(eid)
+            logger.info(f"Logged {eid}")
 
-            end_text = summary_en + "\n\n" + "Ссылки:\n" + "\n".join(links) + "\n\n"+"-"*100+"\n\n"
-
-            file.write(end_text)
-            cache.mark_sent(event_id)
-            logger.info("Message logs recorded")
 
 if __name__ == "__main__":
     asyncio.run(main())
