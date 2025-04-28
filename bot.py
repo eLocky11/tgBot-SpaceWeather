@@ -104,22 +104,28 @@ class DonkiClient:
 class Formatter:
     @staticmethod
     def format(ev: dict) -> tuple[list[str], list[str]]:
-        remove_lines = ("Links to")
-
         msg_type = ev.get("messageType", ev.get("type", ""))
         issue_time = ev.get("messageIssueTime", ev.get("beginTime", ""))
         body = ev.get("messageBody", "") or ""
-        link = ev.get("link", "")
+        link = ev.get("messageURL", "")
+        
+        remove_lines = ("Links to", "Community Coordinated Modeling Center", "Message Type", "Message Issue Date", "Message ID", "Disclaimer")
+        replace_lines = {"ccmc": "База данных Уведомлений, Знаний, Информации Координируемого Сообществом Центра Моделирования",
+                        "type": "Тип сообщения: ",
+                        "date": "Дата и время события: ",
+                        "id": "Идентификатор: ",
+        }
         # header
         lines = [f"[{msg_type}] {issue_time}"]
         # body lines until Links to:
         for raw in body.splitlines():
-            txt = raw.strip()
+            raw = raw.replace("##", "")
+            raw = raw.strip()
+            txt = raw
             if txt.startswith(remove_lines):
-                continue
-            clean = re.sub(r"^##\s*", "", raw).rstrip()
-            if clean:
-                lines.append(clean)
+                # continue
+                pass
+            lines.append(raw)
         # extract links
         urls = re.findall(r"https?://\S+", body)
         if link:
@@ -130,6 +136,9 @@ class Formatter:
                 seen.add(url)
                 links.append(url)
         return lines, links
+    
+    def formate_for_translate():
+        pass
 
 
 class Translator:

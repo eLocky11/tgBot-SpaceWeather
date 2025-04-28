@@ -15,7 +15,8 @@ def test():
     for line in content.splitlines():
         line = line.strip()
         if line.startswith(remove):
-            continue
+            # continue
+            pass
         if line == "Summary:":
             line = "Сводка:"
         if line == "Notes:":
