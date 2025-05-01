@@ -93,96 +93,31 @@ class DonkiClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    def fetch(self, start: str, end: str) -> list:
+    def fetch(self) -> list:
         params = {
-            "startDate": start,
-            "endDate": end,
-            "type": "all",
             "api_key": self.api_key,
         }
-        logging.info(f"Fetching DONKI from {start} to {end}")
+        logging.info(f"Fetching DONKI events data")
         resp = requests.get(DONKI_URL, params=params)
         resp.raise_for_status()
         data = resp.json()
-        # save raw JSON response
-        with open("output.json", "w", encoding="utf-8") as jf:
-            json.dump(data, jf, ensure_ascii=False, indent=2)
         return data
 
 
 # Форматирование текста, два этапа: сырое до перевода, готовое сообщение для отправки
 class Formatter:
-    # ШАБЛОНЫ
-    # FLR - Солнечные вспышки
-    FLR_TEMPLATE = Template(
+    # Шаблон сообщения
+    MSG_TEMPLATE_LEGACY = Template(
         """
-**[{{ header }}]**
+**[{{ msg_type }}]** - {{ event_id }} - **{{ event_name }}**
+
 **Сводка**:
 {{ summary_text }}
 
-Параметры FLР:
-- Время начала: {{ start_time or '—' }}
-- Время пика: {{ peak_time or '—' }}
-- Интенсивность: {{ intensity or '—' }}
-- Регион источника: {{ source_region or '—' }}
-- Идентификатор: {{ activity_id or '—' }}
-
-{% if links %}
-Ссылки:
-{% for url in links -%}
-- {{ url }}
-{% endfor %}
-{% endif %}
-
+{% if notes %}
 Примечания:
-{{ notes or '—' }}
-""".strip()
-    )
-
-    # SEP - Подъём энергичных частиц
-    SEP_TEMPLATE = Template(
-        """
-**[{{ header }}]**
-**Сводка**:
-{{ summary_text }}
-
-Activity ID: {{ activity_id or '—' }}
-
-{% if links %}
-Ссылки:
-{% for url in links -%}
-- {{ url }}
-{% endfor %}
+{{ notes }}
 {% endif %}
-
-Примечания:
-{{ notes or '—' }}
-""".strip()
-    )
-
-    # CME - Выброс корональной массы
-    CME_TEMPLATE = Template(
-        """
-**[{{ header }} ВЫБРОС КОРОНАЛЬНОЙ МАССЫ]**
-**Сводка**:
-{{ summary_text }}
-
-Параметры CME:
-- Время начала: {{ start_time or '—' }}
-- Скорость: {{ speed or '—' }} км/с
-- Полуугол раскрытия: {{ half_angle or '—' }}°
-- Направление (lon/lat): {{ lon or '—' }}/{{ lat or '—' }}
-- Activity ID: {{ activity_id or '—' }}
-
-Типы CME:
-- S-тип: CME со скоростью менее 500 км/с
-- C-тип: Обычная скорость 500-999 км/с
-- O-образный: Время от времени 1000-1999 км/с
-- R-тип: редкие 2000-2999 км/с
-- ER-тип: Чрезвычайно редкий >3000 км/с
-
-Ожидаемое влияние:
-{{ impact_paragraph or '—' }}
 
 {% if links %}
 Ссылки на анимации:
@@ -190,55 +125,20 @@ Activity ID: {{ activity_id or '—' }}
 - {{ url }}
 {% endfor %}
 {% endif %}
-
-Примечания:
-{{ notes or '—' }}
 """.strip()
     )
 
-    # IPS, MPC, GST - Межпланетные ударные волны, Прорывы магнитопаузы, Геомагнитные бури
-    SIMPLE_TEMPLATE = Template(
+    MSG_TEMPLATE = Template(
         """
-**[{{ header }}]**
+**[{{ msg_type }}]** - {{ event_id }} - **{{ event_name }}**
+
 **Сводка**:
 {{ summary_text }}
 
-Activity ID: {{ activity_id or '—' }}
-
-{% if links %}
-Ссылки:
-{% for url in links -%}
-- {{ url }}
-{% endfor %}
-{% endif %}
-
+{% if notes %}
 Примечания:
-{{ notes or '—' }}
-""".strip()
-    )
-
-    # RBE - Усиление радиационных поясов
-    RBE_TEMPLATE = Template(
-        """
-**[{{ header }}]**
-**Сводка**:
-{{ summary_text }}
-
-Параметры RBE:
-- Время начала: {{ start_time or '—' }}
-- Поток (>2.0 MeV): {{ flux or '—' }} pfu
-- Причина: {{ cause or '—' }}
-- Activity ID: {{ activity_id or '—' }}
-
-{% if links %}
-Ссылки:
-{% for url in links -%}
-- {{ url }}
-{% endfor %}
+{{ notes }}
 {% endif %}
-
-Примечания:
-{{ notes or '—' }}
 """.strip()
     )
 
@@ -246,116 +146,100 @@ Activity ID: {{ activity_id or '—' }}
     def _find(text: str, pattern: str) -> str | None:
         m = re.search(pattern, text)
         return m.group(1).strip() if m else None
+    
+    @classmethod
+    def set_name(cls, id: str):
+        match id:
+            case "FLR":
+                return "Солнечная вспышка"
+            case "SEP":
+                return "Подъём энергичных частиц"
+            case "CME":
+                return "Корональный выброс массы"
+            case "IPS":
+                return "Межпланетные ударные волны"
+            case "MPC":
+                return "Прорывы магнитопаузы"
+            case "GST":
+                return "Геомагнитные бури"
+            case "RBE":
+                return "Усиление радиационных поясов"
 
     @classmethod
-    def pre_format(cls, ev: dict) -> dict:
-        """
-        Разбираем сырой JSON-эвент, собираем общий набор полей
-        и доп. атрибуты, специфичные для каждого типа.
-        """
-        event_id = ev.get("messageID", "")
-        msg_type = ev.get("messageType", ev.get("type", ""))
-        issue_time = ev.get("messageIssueTime", ev.get("beginTime", ""))
-        header = f"{msg_type} {issue_time}"
+    def base_data(cls, ev: dict) -> dict:
+        msg_type = ev.get("messageType", "")
+        msg_id = ev.get("messageID", "")
+        msg_time = ev.get("messageIssueTime", "")
+        msg_name = cls.set_name(msg_type)
         body = ev.get("messageBody", "") or ""
-
-        # Ссылки: первичная и все найденные в теле
-        raw_links = [ev.get("messageURL")] + re.findall(r"https?://\S+", body)
-        links = []
-        for u in raw_links:
-            if u and u not in links:
-                links.append(u)
-
-        # Чистим от служебных строк '## …' и "(a) …", "(b) …"
-        text = "\n".join(
-            line
-            for line in body.splitlines()
-            if not line.strip().startswith("##")
-            and not line.strip().startswith(("Links to the movies", "http://", "https://", "\n"))
-            and not re.match(r"^\([a-z]\)", line.strip())
-        )
-
-        # Отрезаем и сохраняем Notes
-        notes = ""
-        if "Notes:" in text:
-            parts = text.split("Notes:", 1)
-            text, notes = parts[0], parts[1].strip()
-
-        # Убираем из summary любые упоминания Activity ID
-        summary_lines = [l.strip() for l in text.splitlines() if "Activity ID" not in l]
-        summary_text = "\n".join(summary_lines).replace("Summary:", "").strip()
-
-        data = {
-            "event_id": event_id,
-            "header": header,
+        summary, notes = cls.extract_summary_notes(body)
+        links = cls.extract_links(ev, body)
+        return {
+            "event_id": msg_id,
+            "event_name": msg_name,
             "msg_type": msg_type,
-            "summary_text": summary_text,
+            "msg_time": msg_time,
+            "summary_text": summary,
             "notes": notes,
-            "links": links
+            "links": links,
         }
+    
+    @classmethod
+    def extract_summary_notes(cls, body: str) -> tuple[str, str]:
+        """
+        Разбивает body на два куска:
+        - summary: всё, что между '## Summary:' и (перед) '## Notes:' или концом строки
+        - notes: всё, что после '## Notes:' до конца body
+        """
+        # 1) Найдём и вырежем Notes
+        notes = ""
+        m_notes = re.search(r"##\s*Notes:\s*([\s\S]+)$", body)
+        if m_notes:
+            notes = m_notes.group(1).strip()
+            # обрезаем тело до начала Notes
+            body = body[:m_notes.start()]
 
-        # Специфичное для каждого типа
-        if msg_type == "FLR":
-            data.update(
-                {
-                    "start_time": cls._find(body, r"Flare start time:\s*([\dT:Z\-]+)"),
-                    "peak_time": cls._find(body, r"Flare peak time:\s*([\dT:Z\-]+)"),
-                    "intensity": cls._find(body, r"Flare intensity:\s*(\S+ class)"),
-                    "source_region": cls._find(body, r"Source region:\s*(.+?)\."),
-                    "activity_id": cls._find(body, r"Activity ID:\s*([\w\-\:]+)"),
-                }
-            )
-        elif msg_type == "SEP":
-            data["activity_id"] = cls._find(body, r"Activity ID:\s*([\w\-\:]+)")
-        elif msg_type == "CME":
-            data.update(
-                {
-                    "start_time": cls._find(
-                        body, r"Start time of the event:\s*([\dT:Z\-]+)"
-                    ),
-                    "speed": cls._find(body, r"Estimated speed:\s*~?(\d+)"),
-                    "half_angle": cls._find(body, r"half-angle:\s*(\d+)"),
-                    "lon": cls._find(body, r"lon\./lat\.\):\s*([-\d]+)/"),
-                    "lat": cls._find(body, r"lon\./lat\.\):\s*[-\d]+/([-\d]+)"),
-                    "activity_id": cls._find(body, r"Activity ID:\s*([\w\-\:]+)"),
-                    "impact_paragraph": next(
-                        (l for l in text.splitlines() if l.startswith("Based on")), ""
-                    ),
-                }
-            )
-        elif msg_type in ("IPS", "MPC", "GST"):
-            data["activity_id"] = cls._find(body, r"Activity ID:\s*([\w\-\:]+)")
-        elif msg_type == "RBE":
-            data.update(
-                {
-                    "start_time": cls._find(body, r"starting at\s*([\dT:Z\-]+)"),
-                    "flux": cls._find(body, r"flux is above\s*(\d+)"),
-                    "cause": cls._find(body, r"caused by (.+?)\."),
-                    "activity_id": cls._find(body, r"Activity ID:\s*([\w\-\:]+)"),
-                }
-            )
+        # 2) Найдём Summary
+        summary = ""
+        m_sum = re.search(r"##\s*Summary:\s*([\s\S]+?)(?=(\n##\s*\w+:)|\Z)", body)
+        if m_sum:
+            summary = m_sum.group(1).strip()
+
+        # 3) Уберём Markdown-заголовки '## ' из summary
+        #    (например строки, начинающиеся с '## ')
+        summary = re.sub(r"(?m)^##\s*", "", summary)
+
+        return summary, notes
+
+    @classmethod
+    def extract_links(cls, ev: dict, body: str) -> list[str]:
+        """
+        Собирает все HTTP(S)-ссылки из body и возвращает их списком.
+        Не мутирует ev или body — но при желании можно вырезать ссылки из body.
+        """
+        # найдём все вхождения ссылок
+        urls = re.findall(r"https?://\S+", body)
+        # убираем дубли, сохраняя порядок
+        seen = set()
+        unique = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                unique.append(u)
+        return unique
+
+    # Главная точка входа для разбора сырого JSON
+    @classmethod
+    def pre_format(cls, ev: dict) -> dict:
+        data = cls.base_data(ev)
 
         return data
 
+
+    # Форматируем окончательный текст по шаблону
     @classmethod
     def post_format(cls, data: dict) -> str:
-        """
-        Рендерим окончательный текст в зависимости от типа события.
-        """
-        msg_type = data["msg_type"]
-        if msg_type == "FLR":
-            return cls.FLR_TEMPLATE.render(**data)
-        elif msg_type == "SEP":
-            return cls.SEP_TEMPLATE.render(**data)
-        elif msg_type == "CME":
-            return cls.CME_TEMPLATE.render(**data)
-        elif msg_type in ("IPS", "MPC", "GST"):
-            return cls.SIMPLE_TEMPLATE.render(**data)
-        elif msg_type == "RBE":
-            return cls.RBE_TEMPLATE.render(**data)
-        else:
-            # на всякий случай — просто header+summary
-            return f"[{data['header']}]\n{data['summary_text']}"
+        return cls.MSG_TEMPLATE.render(**data)
 
 
 # Переводчик - Google или DeepL
@@ -430,14 +314,9 @@ class TelegramNotifier:
         logging.info("Send disabled in test mode")
 
 
-def get_date_range() -> tuple[str, str]:
-    today = datetime.now(timezone.utc).date()
-    return (today - timedelta(days=1)).isoformat(), today.isoformat()
-
-
 # Функция для тестирования
-async def testing(input_file="output.json", output_file="test_output.txt", trans: bool = False):
-    logging.info("Starting the test")
+async def formate_test(input_file="donki_output.json", output_file="out_orig.txt", trans: bool = False):
+    logging.info("Starting Formatter test")
 
     db = CacheDB(CACHE_DB_PATH)
     tr = Translator(DEEPL_AUTH_KEY, db) if trans else None
@@ -452,11 +331,27 @@ async def testing(input_file="output.json", output_file="test_output.txt", trans
             if ev.get("messageType") == "Report":
                 continue
             data = Formatter.pre_format(ev)
-            if tr != None:
-                new_summary = await tr.translate(text=data["summary_text"], target_lang="RU", test=True)
-                data["summary_text"] = new_summary
+            if tr:
+                data["summary_text"] = await tr.translate(text=data["summary_text"], target_lang="RU", test=True)
+                if data["notes"]:
+                    data["notes"] = await tr.translate(data["notes"], target_lang="RU", test=True)
             message = Formatter.post_format(data)
             outf.write(message + "\n" + ("=" * 80) + "\n")
+
+
+async def donki_test(output_file = "donki_output.json"):
+    logging.info("Starting DONKI test")
+    donki = DonkiClient(NASA_API_KEY)
+    data = donki.fetch()
+
+    # save raw JSON response
+    with open(output_file, "w", encoding="utf-8") as jf:
+        logging.info("Saving DONKI output data to json")
+        json.dump(data, jf, ensure_ascii=False, indent=2)
+
+
+async def test():
+    pass
 
 
 # асинхронная функция запуска
@@ -469,8 +364,7 @@ async def main():
     tr = Translator(DEEPL_AUTH_KEY, db)
     notifier = TelegramNotifier(TELEGRAM_TOKEN, CHAT_ID)
 
-    start, end = get_date_range()
-    events = client.fetch(start, end)
+    events = client.fetch()
 
     with open("output.txt", "w", encoding="utf-8") as outf:
         for ev in events:
@@ -490,6 +384,13 @@ async def main():
 # запуск
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "test":
-        asyncio.run(testing())
+        asyncio.run(test())
+    elif len(sys.argv) > 1 and sys.argv[1] == "dtest":
+        asyncio.run(donki_test())
+    elif len(sys.argv) > 1 and sys.argv[1] == "ftest":
+        if len(sys.argv) > 2 and sys.argv[2] == "t":
+            asyncio.run(formate_test(output_file="out_trans.txt", trans=True))
+        else:
+            asyncio.run(formate_test())
     else:
         asyncio.run(main())
