@@ -1,3 +1,1 @@
-2025-04-26 21:43:06,189 - DEBUG - Using proactor: IocpProactor
-2025-04-26 21:43:06,193 - DEBUG - Starting new HTTPS connection (1): api.nasa.gov:443
-2025-04-26 21:43:07,442 - DEBUG - https://api.nasa.gov:443 "GET /DONKI/notifications?startDate=2025-04-25&endDate=2025-04-26&type=&api_key=5RqBZjQI4rrfEXoNIwpbEKdYF57IVQkyzBGX1d2h HTTP/1.1" 200 None
+2025-05-01 10:56:51,752 - INFO - Starting the test
