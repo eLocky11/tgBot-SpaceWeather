@@ -84,10 +84,10 @@ class DataBase:
             cur = self.conn.cursor()
             cur.execute("SELECT translated FROM cache WHERE source = ? LIMIT 1", (source_line,))
             row = cur.fetchone()
-            return row[0] if row else source_line
+            return row[0] if row else False
         except sqlite3.Error as e:
             logging.error(f"get_translate_line: SQLite3 error: {e}")
-            return source_line
+            return False
 
     # Закрытие бд
     def close(self):

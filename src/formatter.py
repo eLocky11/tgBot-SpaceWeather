@@ -3,23 +3,31 @@ import re
 from jinja2 import Template
 
 
-# Форматирование текста, два этапа: сырое до перевода, готовое сообщение для отправки
+# Форматирование текста, два этапа: 
+#   -сырой json разбивается строки и достаются переменные
+#   -готовое сообщение для отправки
 class Formatter:
     # Шаблон сообщения
-    MSG_TEMPLATE_LEGACY = Template(
+    MSG_TEMPLATE = Template(
         """
 **[{{ msg_type }}]** - {{ event_id }} - **{{ event_name }}**
 
+База Данных Уведомлений, Знаний и информации Центра Координируемого Сообществом Моделирования ([CCMC DONKI](https://ccmc.gsfc.nasa.gov/tools/DONKI/))
+
 **Сводка**:
-{{ summary_text }}
+{% for line in lines -%}
+{{ line }}
+{% endfor %}
 
 {% if notes %}
-Примечания:
-{{ notes }}
+**Примечания**:
+{% for note in notes -%}
+{{ note }}
+{% endfor %}
 {% endif %}
 
 {% if links %}
-Ссылки на анимации:
+**Ссылки на смоделированные анимации**:
 {% for url in links -%}
 - {{ url }}
 {% endfor %}
@@ -27,28 +35,10 @@ class Formatter:
 """.strip()
     )
 
-    MSG_TEMPLATE = Template(
-        """
-**[{{ msg_type }}]** - {{ event_id }} - **{{ event_name }}**
-
-**Сводка**:
-{{ summary_text }}
-
-{% if notes %}
-Примечания:
-{{ notes }}
-{% endif %}
-""".strip()
-    )
-
+    # Установка имени в зависимости от типа события
     @staticmethod
-    def _find(text: str, pattern: str) -> str | None:
-        m = re.search(pattern, text)
-        return m.group(1).strip() if m else None
-
-    @staticmethod
-    def set_name(id: str):
-        match id:
+    def set_name(msg_type: str):
+        match msg_type:
             case "FLR":
                 return "Солнечная вспышка"
             case "SEP":
@@ -63,84 +53,74 @@ class Formatter:
                 return "Геомагнитные бури"
             case "RBE":
                 return "Усиление радиационных поясов"
+            case _:
+                return f"Неизвестный тип {msg_type}"
 
-    @classmethod
-    def base_data(cls, ev: dict) -> dict:
-        msg_type = ev.get("messageType", "")
-        msg_id = ev.get("messageID", "")
-        msg_time = ev.get("messageIssueTime", "")
-        msg_name = cls.set_name(msg_type)
-        body = ev.get("messageBody", "") or ""
-        lines = cls.extract_body_lines(body)
-        links = cls.extract_links(ev, body)
-        return {
-            "event_id": msg_id,
-            "event_name": msg_name,
-            "msg_type": msg_type,
-            "msg_time": msg_time,
-            "body": body,
-            "lines": lines,
-            "links": links,
-        }
-    
-    # Класс разбития сообщения по строкам
-    @classmethod
-    def extract_body_lines(cls, text: str) -> list[str]:
-        lines = []
-
-    # Удалить, его заменит метод extract_summary_lines
-    @classmethod
-    def extract_summary_notes(cls, body: str) -> tuple[str, str]:
-        """
-        Разбивает body на два куска:
-        - summary: всё, что между '## Summary:' и (перед) '## Notes:' или концом строки
-        - notes: всё, что после '## Notes:' до конца body
-        """
-        # 1) Найдём и вырежем Notes
-        notes = ""
-        m_notes = re.search(r"##\s*Notes:\s*([\s\S]+)$", body)
-        if m_notes:
-            notes = m_notes.group(1).strip()
-            # обрезаем тело до начала Notes
-            body = body[: m_notes.start()]
-
-        # 2) Найдём Summary
-        summary = ""
-        m_sum = re.search(r"##\s*Summary:\s*([\s\S]+?)(?=(\n##\s*\w+:)|\Z)", body)
-        if m_sum:
-            summary = m_sum.group(1).strip()
-
-        # 3) Уберём Markdown-заголовки '## ' из summary
-        #    (например строки, начинающиеся с '## ')
-        summary = re.sub(r"(?m)^##\s*", "", summary)
-
-        return summary, notes
-
-    @classmethod
-    def extract_links(cls, ev: dict, body: str) -> list[str]:
-        """
-        Собирает все HTTP(S)-ссылки из body и возвращает их списком.
-        Не мутирует ev или body — но при желании можно вырезать ссылки из body.
-        """
-        # найдём все вхождения ссылок
-        urls = re.findall(r"https?://\S+", body)
-        # убираем дубли, сохраняя порядок
-        seen = set()
-        unique = []
-        for u in urls:
-            if u not in seen:
-                seen.add(u)
-                unique.append(u)
-        return unique
-
-    # Главная точка входа для разбора сырого JSON
+    # Метод форматирования сырого json, убирает ненужные на этом этапе строки
     @classmethod
     def pre_format(cls, ev: dict) -> dict:
-        data = cls.base_data(ev)
+        raw = ev.get("messageBody", "") or ""
 
-        return data
+        # Убираем всё до summary
+        parts = re.split(r"##\s*Summary\s*:", raw, maxsplit=1)
+        summary_block = parts[1] if len(parts) > 1 else raw
 
-    # Форматируем окончательный текст по шаблону
+        # Делим на summary и notes
+        parts = re.split(r"##\s*Notes\s*:", summary_block, maxsplit=1)
+        summary_part = parts[0]
+        notes_part = parts[1] if len(parts) > 1 else ""
+
+        # Вырезаем ссылки
+        lines, links = [], []
+        for ln in summary_part.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            # Убираем автоматические комментарии по анимациям
+            if re.search(r"Links? to the movies? of the modeled event", ln, flags=re.IGNORECASE):
+                continue
+            if re.search(r"Links? to the movies? of the modeled event", ln, flags=re.IGNORECASE):
+                continue
+            if re.search(r"^\([a-z]\)", ln, flags=re.IGNORECASE):
+                continue
+            if ln.startswith("http"):
+                links.append(ln)
+            else:
+                lines.append(ln)
+
+        # Убираем лишнее
+        
+        
+        # Разбираем notes на отдельные непустые строки, убираем notes совсем если пусто
+        notes = [ln.strip() for ln in notes_part.splitlines() if ln.strip()]
+
+        # Собираем, возвращаем
+        return {
+            "event_id":     ev.get("messageID", ""),
+            "event_name":   cls.set_name(ev.get("messageType", "")),
+            "msg_type":     ev.get("messageType", ""),
+            "lines":        lines,
+            "notes":        notes,
+            "links":        links,
+        }
+
+    # Форматируем окончательный текст по шаблону, добавляя или возвращая контент
     @classmethod
     def post_format(cls, data: dict) -> str:
         return cls.MSG_TEMPLATE.render(**data)
+    
+    @staticmethod
+    def split_line(line: str) -> tuple[list[str], list[str]]:
+        parts = re.split(r"(\. |: )", line)
+        texts = parts[::2]
+        delims = parts[1::2]
+        return texts, delims
+    
+    @staticmethod
+    def rejoin_line(texts: list[str], delims: list[str]) -> str:
+        out = ""
+        for i, txt in enumerate(texts):
+            out += txt
+            if i < len(delims):
+                out += delims[i]
+        return out
