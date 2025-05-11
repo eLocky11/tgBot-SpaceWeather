@@ -40,12 +40,13 @@ class Translator:
         cache_pairs: list[tuple[str,str]] = []     # пары для кэша
 
         for line in text_list:
-            if not self.db.get_translate_line(line):
+            cached = self.db.get_translate_line(line)
+            if cached:
+                result_lines.append(cached)
+            else:
                 translated = await self.google_translate(line, src_lang.lower(), target_lang.lower())
                 cache_pairs.append((line, translated))
                 result_lines.append(translated)
-            else:
-                result_lines.append(self.db.get_translate_line(line))
         
         # один единственный вызов пакетной вставки
         if cache_pairs:

@@ -3,6 +3,5 @@
 *.txt
 *.json
 *.db
-*.py
 logs.log
 donki_output.json

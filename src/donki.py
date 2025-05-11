@@ -1,4 +1,4 @@
-import logging, requests
+import logging, requests, aiohttp
 
 
 # NASA DONKI API client
@@ -7,6 +7,7 @@ class DonkiClient:
         self.api_key = api_key
         self.url = url
 
+    # basic fetch
     def fetch(self) -> list:
         params = {
             "api_key": self.api_key,
@@ -16,3 +17,10 @@ class DonkiClient:
         resp.raise_for_status()
         data = resp.json()
         return data
+    
+    # async fetch
+    async def new_fetch(self) -> list:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.url, params={"api_key": self.api_key}) as resp:
+                resp.raise_for_status()
+                return await resp.json()
