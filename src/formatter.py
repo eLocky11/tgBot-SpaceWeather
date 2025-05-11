@@ -10,26 +10,24 @@ class Formatter:
     # Шаблон сообщения
     MSG_TEMPLATE = Template(
         """
-**[{{ msg_type }}]** - {{ event_id }} - **{{ event_name }}**
+<b>[CME]</b> – 20250505-AL-002 – <b>Корональный выброс массы</b>
 
-База Данных Уведомлений, Знаний и информации Центра Координируемого Сообществом Моделирования ([CCMC DONKI](https://ccmc.gsfc.nasa.gov/tools/DONKI/))
+База Данных Уведомлений, Знаний и информации Центра Координируемого Сообществом Моделирования <a href="https://ccmc.gsfc.nasa.gov/tools/DONKI/">CCMC DONKI</a>
 
-**Сводка**:
+<b>Сводка</b>:
 {% for line in lines -%}
 {{ line }}
 {% endfor %}
-
 {% if notes %}
-**Примечания**:
+<b>Примечания</b>:
 {% for note in notes -%}
 {{ note }}
 {% endfor %}
 {% endif %}
-
 {% if links %}
-**Ссылки на смоделированные анимации**:
+<b>Ссылки на смоделированные анимации</b>:
 {% for url in links -%}
-- {{ url }}
+{{ url }}
 {% endfor %}
 {% endif %}
 """.strip()
@@ -103,15 +101,32 @@ class Formatter:
             "notes":        notes,
             "links":        links,
         }
-
+    
     # Форматируем окончательный текст по шаблону, добавляя или возвращая контент
     @classmethod
-    def post_format(cls, data: dict) -> str:
-        return cls.MSG_TEMPLATE.render(**data)
+    def post_format(cls, data: dict, escape: bool = False) -> str:
+        if escape:
+            safe_data = {
+                k: (
+                    [cls.escape_markdown(x) for x in v] if isinstance(v, list)
+                    else cls.escape_markdown(v)
+                )
+                for k, v in data.items()
+            }
+        else:
+            safe_data = data
+        return cls.MSG_TEMPLATE.render(**safe_data)
+
+        
+    @staticmethod
+    def escape_markdown(text: str) -> str:
+        escape_chars = r'_\()~`>#+=|{}.!-'
+        return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+
     
     @staticmethod
     def split_line(line: str) -> tuple[list[str], list[str]]:
-        parts = re.split(r"(\. |: )", line)
+        parts = re.split(r"(\. |, |: )", line)
         texts = parts[::2]
         delims = parts[1::2]
         return texts, delims

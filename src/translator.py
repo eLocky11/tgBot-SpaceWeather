@@ -14,6 +14,12 @@ MANUAL_DICT = {
     "Estimated opening half-angle": "Расчетный угол раскрытия",
     "Direction (lon./lat.)": "Направление (долгота/широта)",
     "Activity ID": "ID активности",
+    "Start time of the event": "Время начала события",
+    "CMEs with speeds less than 500 km/s": "менее 500 км/с",
+    "Common 500-999 km/s": "500-999 км/с",
+    "Occasional 1000-1999 km/s": "1000-1999 км/с",
+    "Rare 2000-2999 km/s": "2000-2999 км/с",
+    "Extremely Rare >3000 km/s": "более 3000 км/с",
 }
 
 
