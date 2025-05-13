@@ -1,9 +1,8 @@
 {
     "files.exclude": {
         "**/__pycache__": true,
-        "**/.venv": true,
         "**/.git": true,
-        "**/.gitignore": true,
+        "**/.gitignore": false,
         "**/.svn": true,
         "**/.hg": true,
         "**/.DS_Store": true,

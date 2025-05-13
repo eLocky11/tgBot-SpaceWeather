@@ -249,12 +249,10 @@ class BotApp:
 
 # Тестирование отправки сообщений
     async def _running_mtest(self):
-        logging.info("Тестирование отправки сообщений в телеграм...")
-        chat_id = "-1002340163534" # тестовый
         file_name = "notification.txt"
         with open(file_name, "r", encoding="utf-8") as f:
             message = f.read()
-            await self.bot.send_notification(message, chat_id, parse_mode="HTML")
+            await self.bot.send_notification(message, TG_TEST_ID, parse_mode="HTML")
 
 
 # Запуск
