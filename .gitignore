@@ -1,6 +1,0 @@
-**/__pycache__/
-*.log
-*.json
-.venv/
-logs.log
-donki_output.json

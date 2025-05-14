@@ -5,6 +5,11 @@ from jinja2 import Template
 from src.templates.templates import *
 
 
+def find1(pattern: str, text: str, default: str = UNDEFINED_TEXT) -> str:
+    m = re.search(pattern, text, flags=re.IGNORECASE)
+    return m.group(1) if m else default
+
+
 # Класс форматирования сообщений
 class Formatter:
     @staticmethod
@@ -20,44 +25,71 @@ class Formatter:
         }[msg_type]
     
     @staticmethod
+    
+    @staticmethod
     def extract_context(ev: dict) -> dict:
-        body = ev["messageBody"]
-        # общие поля
-        ctx = {
-            "event_id": ev["messageID"],
-        }
-        # в зависимости от типа парсим регулярками, SEP - пока пропускаем
-    # FLR
+        body = ev.get("messageBody", "")
+        ctx = {"event_id": ev.get("messageID", UNDEFINED_TEXT)}
+
         if ev["messageType"] == "FLR":
-            ctx.update({
-                "start_time":   re.search(r"Flare start time:\s*(\S+Z)", body).group(1),
-                "peak_time":    re.search(r"Flare peak time:\s*(\S+Z)", body).group(1),
-                "intensity":    re.search(r"Flare intensity:\s*([\w\.]+)", body).group(1),
-            })
-    # CME
+            # Первый, «классический» вариант
+            start = find1(r"Flare start time:?\s*([0-9T:\-]+Z)", body)
+            peak  = find1(r"Flare peak time:?\s*([0-9T:\-]+Z)", body)
+            inten = find1(r"Flare intensity:?\s*([\w\.]+)", body)
+
+            if start != UNDEFINED_TEXT and peak != UNDEFINED_TEXT and inten != UNDEFINED_TEXT:
+                ctx.update({
+                    "start_time": start,
+                    "peak_time": peak,
+                    "intensity": inten
+                })
+            else:
+                # Вариант «threshold crossing»
+                # пример: "Flare M5.0 crossing time: 2025-05-14T03:23Z."
+                m = re.search(r"Flare\s+(\S+)\s+crossing time:?\s*([0-9T:\-]+Z)", body)
+                if m:
+                    intensity_cross = m.group(1)   # например "M5.0"
+                    cross_time      = m.group(2)   # например "2025-05-14T03:23Z"
+                    ctx.update({
+                        "start_time":  cross_time,
+                        "peak_time":   cross_time,
+                        "intensity":   intensity_cross
+                    })
+                else:
+                    # ни классический, ни «threshold»: всё не найдено
+                    ctx.update({
+                        "start_time": UNDEFINED_TEXT,
+                        "peak_time":  UNDEFINED_TEXT,
+                        "intensity":  UNDEFINED_TEXT
+                    })
+
+        elif ev["messageType"] == "SEP":
+            # здесь пока простой шаблон без полей
+            pass
+
         elif ev["messageType"] == "CME":
             ctx.update({
-                "cme_type":  re.search(r"(\w-type) CME", body).group(1),
-                "start_time":re.search(r"Start time of the event:\s*(\S+Z)", body).group(1),
-                "speed":     re.search(r"Estimated speed:\s*~?([\d\.]+\s*km/s)", body).group(1),
-                "angle":     re.search(r"Estimated opening half-angle:\s*(\d+\s*deg)", body).group(1),
-                "direction": re.search(r"Direction \(lon\./lat\.\):\s*([\d\/\-]+)", body).group(1),
+                "cme_type":  find1(r"(\w-type)\s+CME", body),
+                "start_time":find1(r"Start time of the event:?\s*([0-9T:\-]+Z)", body),
+                "speed":     find1(r"Estimated speed:?\s*~?([\d\.]+\s*km/s)", body),
+                "angle":     find1(r"Estimated opening half-angle:?\s*(\d+\s*deg)", body),
+                "direction": find1(r"Direction \(lon\./lat\.\):\s*([\d\/\-]+)", body),
             })
-    # IPS
+
         elif ev["messageType"] == "IPS":
-            ctx["detect_time"] = re.search(r"at\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z)", body).group(1)
-    # MPC
+            ctx["detect_time"] = find1(r"at\s+([0-9T:\-]+Z)", body)
+
         elif ev["messageType"] == "MPC":
-            ctx["start_time"] = re.search(r"starting at\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z)", body).group(1)
-    # GST
+            ctx["start_time"] = find1(r"starting at\s+([0-9T:\-]+Z)", body)
+
         elif ev["messageType"] == "GST":
             ctx.update({
-                "start_time":re.search(r"during the synoptic period\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z))", body).group(1),
-                "end_time":re.search(r"to\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z)", body).group(1),
-                "k-index": re.search(r"Kp index has reached level\s+(\d+\.\d{2})", body).group(1),
+                "start_time": find1(r"during the synoptic period\s+([0-9T:\-]+Z)", body),
+                "end_time":   find1(r"to\s+([0-9T:\-]+Z)", body),
+                "k-index":    find1(r"Kp index has reached level\s+(\d+\.\d{2})", body),
             })
-    # RBE
+
         elif ev["messageType"] == "RBE":
-            ctx["start_time"] = re.search(r"at\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z)", body).group(1)
+            ctx["start_time"] = find1(r"at\s+([0-9T:\-]+Z)", body)
 
         return ctx

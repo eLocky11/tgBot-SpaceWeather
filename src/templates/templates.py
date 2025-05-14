@@ -9,7 +9,7 @@ class DefaultUndefined(Undefined):
 
 FLR_TEMPLATE = Template(
     """
-<b>Обнаружена <a href="https://ru.wikipedia.org/wiki/Солнечная_вспышка">солнечная вспышка!</a></b>
+<b>Обнаружена <a href="https://ru.wikipedia.org/wiki/Солнечная_вспышка">солнечная вспышка</a></b>
 
 <u>ID активности:</u> <code>{{ event_id }}</code>
 <u>Время начала вспышки:</u> <code>{{ start_time }}</code>
