@@ -19,12 +19,14 @@ class BotApp:
             format="%(asctime)s - %(levelname)s - %(message)s",  # формат сообщений
             filemode="a",  # Мод - дополнение
         )
-
+        self.test_mode = True if len(argv) > 1 and argv[1] == "test" else False
+        if self.test_mode:
+            logging.info("Активирован тестовый режим. Отключен доступ к базе данных, отправка в testing чат")
         self.on_init()
 
 # Инициализатор
     def on_init(self):
-        self.db = DataBase(DB_PATH)
+        self.db = DataBase(DB_PATH, self.test_mode)
         self.bot = TelegramNotifier(TELEGRAM_TOKEN)
         self.donki = DonkiClient(NASA_API_KEY, DONKI_URL)
 
@@ -64,8 +66,9 @@ class BotApp:
                 continue
 
             # 4. отправление и сохранение с бд
+            chat_id = TG_TEST_ID if self.test_mode else TG_CHAT_ID
             try:
-                await self.bot.send_notification(msg, TG_TEST_ID, parse_mode="HTML")
+                await self.bot.send_notification(msg, chat_id, parse_mode="HTML")
                 self.db.add_event(m_id, msg)
                 logging.info(f"Событие {m_id} отправлено и сохранено.")
             except Exception as e:
