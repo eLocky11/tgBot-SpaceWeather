@@ -7,7 +7,7 @@ class DonkiClient:
         self.api_key = api_key
         self.url = url
 
-    # basic fetch
+    # Basic fetch (legacy)
     def fetch(self) -> list:
         params = {
             "api_key": self.api_key,
@@ -18,7 +18,7 @@ class DonkiClient:
         data = resp.json()
         return data
     
-    # async fetch
+    # New async fetch
     async def new_fetch(self) -> list:
         async with aiohttp.ClientSession() as session:
             async with session.get(self.url, params={"api_key": self.api_key}) as resp:

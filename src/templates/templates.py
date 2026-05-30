@@ -4,7 +4,7 @@ UNDEFINED_TEXT = "Неизвестно"
 
 class DefaultUndefined(Undefined):
     def __str__(self):
-        # при любом доступе к неопределённой переменной возвращаем текст
+        # With any access to an undefined variable, we return the text
         return UNDEFINED_TEXT
 
 FLR_TEMPLATE = Template(
